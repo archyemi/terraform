@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/terraform/config"
+	"github.com/hashicorp/terraform/configs"
 	"github.com/hashicorp/terraform/dag"
 )
 
@@ -29,8 +30,8 @@ type NodeAbstractResource struct {
 	// interfaces if you're running those transforms, but also be explicitly
 	// set if you already have that information.
 
-	Config        *config.Resource // Config is the resource in the config
-	ResourceState *ResourceState   // ResourceState is the ResourceState for this
+	Config        *configs.Resource // Config is the resource in the config
+	ResourceState *ResourceState    // ResourceState is the ResourceState for this
 
 	Targets []ResourceAddress // Set from GraphNodeTargetable
 
@@ -231,7 +232,7 @@ func (n *NodeAbstractResource) AttachResourceState(s *ResourceState) {
 }
 
 // GraphNodeAttachResourceConfig
-func (n *NodeAbstractResource) AttachResourceConfig(c *config.Resource) {
+func (n *NodeAbstractResource) AttachResourceConfig(c *configs.Resource) {
 	n.Config = c
 }
 

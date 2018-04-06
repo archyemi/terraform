@@ -6,7 +6,9 @@ import (
 	"log"
 	"sync"
 
+	"github.com/hashicorp/terraform/addrs"
 	"github.com/hashicorp/terraform/config"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // BuiltinEvalContext is an EvalContext implementation that is used by
@@ -16,8 +18,14 @@ type BuiltinEvalContext struct {
 	StopContext context.Context
 
 	// PathValue is the Path that this context is operating within.
-	PathValue []string
+	PathValue addrs.ModuleInstance
 
+	// Evaluator is used for evaluating expressions within the scope of this
+	// eval context.
+	Evaluator *Evaluator
+
+	//
+	//
 	// Interpolater setting below affect the interpolation of variables.
 	//
 	// The InterpolaterVars are the exact value for ${var.foo} values.
@@ -33,7 +41,7 @@ type BuiltinEvalContext struct {
 	Hooks               []Hook
 	InputValue          UIInput
 	ProviderCache       map[string]ResourceProvider
-	ProviderInputConfig map[string]map[string]interface{}
+	ProviderInputConfig map[string]map[string]cty.Value
 	ProviderLock        *sync.Mutex
 	ProvisionerCache    map[string]ResourceProvisioner
 	ProvisionerLock     *sync.Mutex
@@ -44,6 +52,9 @@ type BuiltinEvalContext struct {
 
 	once sync.Once
 }
+
+// BuiltinEvalContext implements EvalContext
+var _ EvalContext = (*BuiltinEvalContext)(nil)
 
 func (ctx *BuiltinEvalContext) Stopped() <-chan struct{} {
 	// This can happen during tests. During tests, we just block forever.
@@ -136,19 +147,15 @@ func (ctx *BuiltinEvalContext) ConfigureProvider(
 	return p.Configure(cfg)
 }
 
-func (ctx *BuiltinEvalContext) ProviderInput(n string) map[string]interface{} {
+func (ctx *BuiltinEvalContext) ProviderInput(pc addrs.ProviderConfig) map[string]cty.Value {
 	ctx.ProviderLock.Lock()
 	defer ctx.ProviderLock.Unlock()
 
-	// Make a copy of the path so we can safely edit it
+	// Go up the module tree, looking for input results for the given provider
+	// configuration.
 	path := ctx.Path()
-	pathCopy := make([]string, len(path)+1)
-	copy(pathCopy, path)
-
-	// Go up the tree.
-	for i := len(path) - 1; i >= 0; i-- {
-		pathCopy[i+1] = n
-		k := PathCacheKey(pathCopy[:i+2])
+	for i := len(path); i >= 0; i-- {
+		k := pc.Absolute(path[:i]).String()
 		if v, ok := ctx.ProviderInputConfig[k]; ok {
 			return v
 		}
@@ -157,14 +164,12 @@ func (ctx *BuiltinEvalContext) ProviderInput(n string) map[string]interface{} {
 	return nil
 }
 
-func (ctx *BuiltinEvalContext) SetProviderInput(n string, c map[string]interface{}) {
-	providerPath := make([]string, len(ctx.Path())+1)
-	copy(providerPath, ctx.Path())
-	providerPath[len(providerPath)-1] = n
+func (ctx *BuiltinEvalContext) SetProviderInput(pc addrs.ProviderConfig, c map[string]cty.Value) {
+	absProvider := pc.Absolute(ctx.Path())
 
 	// Save the configuration
 	ctx.ProviderLock.Lock()
-	ctx.ProviderInputConfig[PathCacheKey(providerPath)] = c
+	ctx.ProviderInputConfig[absProvider.String()] = c
 	ctx.ProviderLock.Unlock()
 }
 
@@ -256,8 +261,7 @@ func (ctx *BuiltinEvalContext) Interpolate(
 	return result, nil
 }
 
-func (ctx *BuiltinEvalContext) InterpolateProvider(
-	pc *config.ProviderConfig, r *Resource) (*ResourceConfig, error) {
+func (ctx *BuiltinEvalContext) InterpolateProvider(pc *config.ProviderConfig, r *Resource) (*ResourceConfig, error) {
 
 	var cfg *config.RawConfig
 
@@ -285,7 +289,7 @@ func (ctx *BuiltinEvalContext) InterpolateProvider(
 	return result, nil
 }
 
-func (ctx *BuiltinEvalContext) Path() []string {
+func (ctx *BuiltinEvalContext) Path() addrs.ModuleInstance {
 	return ctx.PathValue
 }
 

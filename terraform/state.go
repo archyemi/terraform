@@ -19,8 +19,11 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/hashicorp/go-uuid"
 	"github.com/hashicorp/go-version"
+	"github.com/hashicorp/terraform/addrs"
 	"github.com/hashicorp/terraform/config"
 	"github.com/hashicorp/terraform/config/configschema"
+	"github.com/hashicorp/terraform/configs"
+	"github.com/hashicorp/terraform/tfdiags"
 	tfversion "github.com/hashicorp/terraform/version"
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
@@ -36,26 +39,38 @@ const (
 // rootModulePath is the path of the root module
 var rootModulePath = []string{"root"}
 
+// normalizeModulePath transforms a legacy module path (which may or may not
+// have a redundant "root" label at the start of it) into an
+// addrs.ModuleInstance representing the same module.
+//
+// For legacy reasons, different parts of Terraform disagree about whether the
+// root module has the path []string{} or []string{"root"}, and so this
+// function accepts both and trims off the "root". An implication of this is
+// that it's not possible to actually have a module call in the root module
+// that is itself named "root", since that would be ambiguous.
+//
 // normalizeModulePath takes a raw module path and returns a path that
 // has the rootModulePath prepended to it. If I could go back in time I
 // would've never had a rootModulePath (empty path would be root). We can
 // still fix this but thats a big refactor that my branch doesn't make sense
 // for. Instead, this function normalizes paths.
-func normalizeModulePath(p []string) []string {
-	k := len(rootModulePath)
+func normalizeModulePath(p []string) addrs.ModuleInstance {
+	// FIXME: Remove this once everyone is using addrs.ModuleInstance.
 
-	// If we already have a root module prefix, we're done
-	if len(p) >= len(rootModulePath) {
-		if reflect.DeepEqual(p[:k], rootModulePath) {
-			return p
-		}
+	if len(p) > 0 && p[0] == "root" {
+		p = p[1:]
 	}
 
-	// None? Prefix it
-	result := make([]string, len(rootModulePath)+len(p))
-	copy(result, rootModulePath)
-	copy(result[k:], p)
-	return result
+	ret := make(addrs.ModuleInstance, len(p))
+	for i, name := range p {
+		// For now we don't actually support modules with multiple instances
+		// identified by keys, so we just treat every path element as a
+		// step with no key.
+		ret[i] = addrs.ModuleInstanceStep{
+			Name: name,
+		}
+	}
+	return ret
 }
 
 // State keeps track of a snapshot state-of-the-world that Terraform
@@ -1123,27 +1138,21 @@ func (m *ModuleState) Orphans(c *config.Config) []string {
 
 // RemovedOutputs returns a list of outputs that are in the State but aren't
 // present in the configuration itself.
-func (m *ModuleState) RemovedOutputs(c *config.Config) []string {
-	m.Lock()
-	defer m.Unlock()
-
-	keys := make(map[string]struct{})
-	for k := range m.Outputs {
-		keys[k] = struct{}{}
+func (s *ModuleState) RemovedOutputs(outputs map[string]*configs.Output) []string {
+	if outputs == nil {
+		return nil
 	}
+	s.Lock()
+	defer s.Unlock()
 
-	if c != nil {
-		for _, o := range c.Outputs {
-			delete(keys, o.Name)
+	var ret []string
+	for n := range s.Outputs {
+		if _, declared := outputs[k]; !declared {
+			ret = append(ret, n)
 		}
 	}
 
-	result := make([]string, 0, len(keys))
-	for k := range keys {
-		result = append(result, k)
-	}
-
-	return result
+	return ret
 }
 
 // View returns a view with the given resource prefix.
@@ -2190,17 +2199,27 @@ func (s moduleStateSort) Swap(i, j int) {
 	s[i], s[j] = s[j], s[i]
 }
 
-// StateCompatible returns an error if the state is not compatible with the
-// current version of terraform.
-func CheckStateVersion(state *State) error {
+// CheckStateVersion returns error diagnostics if the state is not compatible
+// with the current version of Terraform Core.
+func CheckStateVersion(state *State, allowFuture bool) tfdiags.Diagnostics {
+	var diags tfdiags.Diagnostics
+
 	if state == nil {
-		return nil
+		return diags
 	}
 
-	if state.FromFutureTerraform() {
-		return fmt.Errorf(stateInvalidTerraformVersionErr, state.TFVersion)
+	if state.FromFutureTerraform() && !allowFuture {
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Incompatible Terraform state format",
+			fmt.Sprintf(
+				"For safety reasons, Terraform will not run operations against a state that was written by a future Terraform version. Your current version is %s, but the state requires at least %s. To proceed, upgrade Terraform to a suitable version.",
+				tfversion.String(), state.TFVersion,
+			),
+		))
 	}
-	return nil
+
+	return diags
 }
 
 const stateValidateErrMultiModule = `
@@ -2210,12 +2229,4 @@ This means that there are multiple entries in the "modules" field
 in your state file that point to the same module. This will cause Terraform
 to behave in unexpected and error prone ways and is invalid. Please back up
 and modify your state file manually to resolve this.
-`
-
-const stateInvalidTerraformVersionErr = `
-Terraform doesn't allow running any operations against a state
-that was written by a future Terraform version. The state is
-reporting it is written by Terraform '%s'
-
-Please run at least that version of Terraform to continue.
 `

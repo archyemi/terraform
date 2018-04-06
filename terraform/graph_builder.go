@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"log"
 	"strings"
+
+	"github.com/hashicorp/terraform/tfdiags"
+
+	"github.com/hashicorp/terraform/addrs"
 )
 
 // GraphBuilder is an interface that can be implemented and used with
@@ -12,7 +16,7 @@ type GraphBuilder interface {
 	// Build builds the graph for the given module path. It is up to
 	// the interface implementation whether this build should expand
 	// the graph or not.
-	Build(path []string) (*Graph, error)
+	Build(addrs.ModuleInstance) (*Graph, tfdiags.Diagnostics)
 }
 
 // BasicGraphBuilder is a GraphBuilder that builds a graph out of a
@@ -25,7 +29,7 @@ type BasicGraphBuilder struct {
 	Name string
 }
 
-func (b *BasicGraphBuilder) Build(path []string) (*Graph, error) {
+func (b *BasicGraphBuilder) Build(path addrs.ModuleInstance) (*Graph, tfdiags.Diagnostics) {
 	g := &Graph{Path: path}
 
 	debugName := "graph.json"

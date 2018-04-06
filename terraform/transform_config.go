@@ -6,8 +6,9 @@ import (
 	"log"
 	"sync"
 
-	"github.com/hashicorp/terraform/config"
+	"github.com/hashicorp/terraform/addrs"
 	"github.com/hashicorp/terraform/config/module"
+	"github.com/hashicorp/terraform/configs"
 	"github.com/hashicorp/terraform/dag"
 )
 
@@ -26,14 +27,14 @@ type ConfigTransformer struct {
 	Concrete ConcreteResourceNodeFunc
 
 	// Module is the module to add resources from.
-	Module *module.Tree
+	Config *configs.Config
 
 	// Unique will only add resources that aren't already present in the graph.
 	Unique bool
 
 	// Mode will only add resources that match the given mode
 	ModeFilter bool
-	Mode       config.ResourceMode
+	Mode       addrs.ResourceMode
 
 	l         sync.Mutex
 	uniqueMap map[string]struct{}

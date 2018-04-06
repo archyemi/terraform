@@ -86,6 +86,9 @@ type MockEvalContext struct {
 	StateLock   *sync.RWMutex
 }
 
+// MockEvalContext implements EvalContext
+var _ EvalContext = (*MockEvalContext)(nil)
+
 func (c *MockEvalContext) Stopped() <-chan struct{} {
 	c.StoppedCalled = true
 	return c.StoppedValue

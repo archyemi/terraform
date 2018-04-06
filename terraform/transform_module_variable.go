@@ -5,6 +5,7 @@ import (
 
 	"github.com/hashicorp/terraform/config"
 	"github.com/hashicorp/terraform/config/module"
+	"github.com/hashicorp/terraform/configs"
 	"github.com/hashicorp/terraform/dag"
 )
 
@@ -14,7 +15,7 @@ import (
 // This only adds variables that are referenced by other things in the graph.
 // If a module variable is not referenced, it won't be added to the graph.
 type ModuleVariableTransformer struct {
-	Module *module.Tree
+	Config *configs.Config
 
 	DisablePrune bool // True if pruning unreferenced should be disabled
 }

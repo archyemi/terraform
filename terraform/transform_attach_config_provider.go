@@ -1,8 +1,6 @@
 package terraform
 
-import (
-	"github.com/hashicorp/terraform/config"
-)
+import "github.com/hashicorp/terraform/configs"
 
 // GraphNodeAttachProvider is an interface that must be implemented by nodes
 // that want provider configurations attached.
@@ -14,5 +12,5 @@ type GraphNodeAttachProvider interface {
 	ProviderName() string
 
 	// Sets the configuration
-	AttachProvider(*config.ProviderConfig)
+	AttachProvider(*configs.Provider)
 }

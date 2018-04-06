@@ -138,8 +138,8 @@ func (i *InstanceInfo) uniqueId() string {
 }
 
 // ResourceConfig holds the configuration given for a resource. This is
-// done instead of a raw `map[string]interface{}` type so that rich
-// methods can be added to it to make dealing with it easier.
+// done instead of a raw map[string]cty.Value so that it can carry
+// helper methods.
 type ResourceConfig struct {
 	ComputedKeys []string
 	Raw          map[string]interface{}

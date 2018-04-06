@@ -1,22 +1,20 @@
 package terraform
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"strings"
 
 	"github.com/hashicorp/go-multierror"
-	"github.com/hashicorp/terraform/config"
-	"github.com/hashicorp/terraform/config/module"
+	"github.com/hashicorp/terraform/configs"
 	"github.com/hashicorp/terraform/dag"
 )
 
-func TransformProviders(providers []string, concrete ConcreteProviderNodeFunc, mod *module.Tree) GraphTransformer {
+func TransformProviders(providers []string, concrete ConcreteProviderNodeFunc, config *configs.Config) GraphTransformer {
 	return GraphTransformMulti(
 		// Add providers from the config
 		&ProviderConfigTransformer{
-			Module:    mod,
+			Config:    config,
 			Providers: providers,
 			Concrete:  concrete,
 		},
@@ -415,26 +413,21 @@ type ProviderConfigTransformer struct {
 	// record providers that can be overriden with a proxy
 	proxiable map[string]bool
 
-	// Module is the module to add resources from.
-	Module *module.Tree
+	// Config is the root node of the configuration tree to add providers from.
+	Config *configs.Config
 }
 
 func (t *ProviderConfigTransformer) Transform(g *Graph) error {
-	// If no module is given, we don't do anything
-	if t.Module == nil {
+	// If no configuration is given, we don't do anything
+	if t.Config == nil {
 		return nil
-	}
-
-	// If the module isn't loaded, that is simply an error
-	if !t.Module.Loaded() {
-		return errors.New("module must be loaded for ProviderConfigTransformer")
 	}
 
 	t.providers = make(map[string]GraphNodeProvider)
 	t.proxiable = make(map[string]bool)
 
 	// Start the transformation process
-	if err := t.transform(g, t.Module); err != nil {
+	if err := t.transform(g, t.Config); err != nil {
 		return err
 	}
 
@@ -442,37 +435,34 @@ func (t *ProviderConfigTransformer) Transform(g *Graph) error {
 	return t.attachProviderConfigs(g)
 }
 
-func (t *ProviderConfigTransformer) transform(g *Graph, m *module.Tree) error {
+func (t *ProviderConfigTransformer) transform(g *Graph, c *configs.Config) error {
 	// If no config, do nothing
-	if m == nil {
+	if c == nil {
 		return nil
 	}
 
 	// Add our resources
-	if err := t.transformSingle(g, m); err != nil {
+	if err := t.transformSingle(g, c); err != nil {
 		return err
 	}
 
 	// Transform all the children.
-	for _, c := range m.Children() {
-		if err := t.transform(g, c); err != nil {
+	for _, cc := range c.Children {
+		if err := t.transform(g, cc); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (t *ProviderConfigTransformer) transformSingle(g *Graph, m *module.Tree) error {
+func (t *ProviderConfigTransformer) transformSingle(g *Graph, c *configs.Config) error {
 	log.Printf("[TRACE] ProviderConfigTransformer: Starting for path: %v", m.Path())
 
 	// Get the configuration for this module
-	conf := m.Config()
+	mod := c.Module()
 
 	// Build the path we're at
-	path := m.Path()
-	if len(path) > 0 {
-		path = append([]string{RootModuleName}, path...)
-	}
+	path := c.Path
 
 	// add all providers from the configuration
 	for _, p := range conf.ProviderConfigs {
@@ -496,26 +486,26 @@ func (t *ProviderConfigTransformer) transformSingle(g *Graph, m *module.Tree) er
 	// Now replace the provider nodes with proxy nodes if a provider was being
 	// passed in, and create implicit proxies if there was no config. Any extra
 	// proxies will be removed in the prune step.
-	return t.addProxyProviders(g, m)
+	return t.addProxyProviders(g, c)
 }
 
-func (t *ProviderConfigTransformer) addProxyProviders(g *Graph, m *module.Tree) error {
-	path := m.Path()
+func (t *ProviderConfigTransformer) addProxyProviders(g *Graph, c *configs.Config) error {
+	path := c.Path
 
 	// can't add proxies at the root
 	if len(path) == 0 {
 		return nil
 	}
 
-	parentPath := path[:len(path)-1]
-	parent := t.Module.Child(parentPath)
+	parentPath, callName := path[:len(path)-1], path[len(path)-1]
+	parent := c.DescendentForInstance(parentPath)
 	if parent == nil {
 		return nil
 	}
 
-	var parentCfg *config.Module
-	for _, mod := range parent.Config().Modules {
-		if mod.Name == m.Name() {
+	var parentCfg *configs.ModuleCall
+	for name, mod := range parent.Module.ModuleCalls {
+		if name == callName {
 			parentCfg = mod
 			break
 		}
@@ -575,18 +565,18 @@ func (t *ProviderConfigTransformer) attachProviderConfigs(g *Graph) error {
 		}
 
 		// Determine what we're looking for
-		path := normalizeModulePath(apn.Path())[1:]
+		path := apn.Path()
 		name := apn.ProviderName()
 		log.Printf("[TRACE] Attach provider request: %#v %s", path, name)
 
 		// Get the configuration.
-		tree := t.Module.Child(path)
-		if tree == nil {
+		mc := t.Config.DescendentForInstance(path)
+		if mc == nil {
 			continue
 		}
 
 		// Go through the provider configs to find the matching config
-		for _, p := range tree.Config().ProviderConfigs {
+		for _, p := range mc.Module.Providers {
 			// Build the name, which is "name.alias" if an alias exists
 			current := p.Name
 			if p.Alias != "" {

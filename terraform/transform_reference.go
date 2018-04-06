@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/hashicorp/terraform/addrs"
 	"github.com/hashicorp/terraform/config"
 	"github.com/hashicorp/terraform/dag"
 )
@@ -359,18 +360,8 @@ func ReferenceFromInterpolatedVar(v config.InterpolatedVariable) []string {
 	}
 }
 
-func modulePrefixStr(p []string) string {
-	// strip "root"
-	if len(p) > 0 && p[0] == rootModulePath[0] {
-		p = p[1:]
-	}
-
-	parts := make([]string, 0, len(p)*2)
-	for _, p := range p {
-		parts = append(parts, "module", p)
-	}
-
-	return strings.Join(parts, ".")
+func modulePrefixStr(p addrs.ModuleInstance) string {
+	return p.String()
 }
 
 func modulePrefixList(result []string, prefix string) []string {

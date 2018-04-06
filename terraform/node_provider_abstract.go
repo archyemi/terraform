@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hashicorp/terraform/config"
+	"github.com/hashicorp/terraform/addrs"
+	"github.com/hashicorp/terraform/configs"
+
 	"github.com/hashicorp/terraform/dag"
 )
 
@@ -16,16 +18,16 @@ type ConcreteProviderNodeFunc func(*NodeAbstractProvider) dag.Vertex
 // It registers all the common interfaces across operations for providers.
 type NodeAbstractProvider struct {
 	NameValue string
-	PathValue []string
+	PathValue addrs.ModuleInstance
 
 	// The fields below will be automatically set using the Attach
 	// interfaces if you're running those transforms, but also be explicitly
 	// set if you already have that information.
 
-	Config *config.ProviderConfig
+	Config *configs.Provider
 }
 
-func ResolveProviderName(name string, path []string) string {
+func ResolveProviderName(name string, path addrs.ModuleInstance) string {
 	if strings.Contains(name, "provider.") {
 		// already resolved
 		return name
@@ -44,7 +46,7 @@ func (n *NodeAbstractProvider) Name() string {
 }
 
 // GraphNodeSubPath
-func (n *NodeAbstractProvider) Path() []string {
+func (n *NodeAbstractProvider) Path() addrs.ModuleInstance {
 	return n.PathValue
 }
 
@@ -70,7 +72,7 @@ func (n *NodeAbstractProvider) ProviderName() string {
 }
 
 // GraphNodeProvider
-func (n *NodeAbstractProvider) ProviderConfig() *config.ProviderConfig {
+func (n *NodeAbstractProvider) ProviderConfig() *configs.Provider {
 	if n.Config == nil {
 		return nil
 	}
@@ -79,7 +81,7 @@ func (n *NodeAbstractProvider) ProviderConfig() *config.ProviderConfig {
 }
 
 // GraphNodeAttachProvider
-func (n *NodeAbstractProvider) AttachProvider(c *config.ProviderConfig) {
+func (n *NodeAbstractProvider) AttachProvider(c *configs.Provider) {
 	n.Config = c
 }
 

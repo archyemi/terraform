@@ -45,65 +45,7 @@ type InterpolationScope struct {
 func (i *Interpolater) Values(
 	scope *InterpolationScope,
 	vars map[string]config.InterpolatedVariable) (map[string]ast.Variable, error) {
-	if scope == nil {
-		scope = &InterpolationScope{}
-	}
-
-	result := make(map[string]ast.Variable, len(vars))
-
-	// Copy the default variables
-	if i.Module != nil && scope != nil {
-		mod := i.Module
-		if len(scope.Path) > 1 {
-			mod = i.Module.Child(scope.Path[1:])
-		}
-		for _, v := range mod.Config().Variables {
-			// Set default variables
-			if v.Default == nil {
-				continue
-			}
-
-			n := fmt.Sprintf("var.%s", v.Name)
-			variable, err := hil.InterfaceToVariable(v.Default)
-			if err != nil {
-				return nil, fmt.Errorf("invalid default map value for %s: %v", v.Name, v.Default)
-			}
-
-			result[n] = variable
-		}
-	}
-
-	for n, rawV := range vars {
-		var err error
-		switch v := rawV.(type) {
-		case *config.CountVariable:
-			err = i.valueCountVar(scope, n, v, result)
-		case *config.ModuleVariable:
-			err = i.valueModuleVar(scope, n, v, result)
-		case *config.PathVariable:
-			err = i.valuePathVar(scope, n, v, result)
-		case *config.ResourceVariable:
-			err = i.valueResourceVar(scope, n, v, result)
-		case *config.SelfVariable:
-			err = i.valueSelfVar(scope, n, v, result)
-		case *config.SimpleVariable:
-			err = i.valueSimpleVar(scope, n, v, result)
-		case *config.TerraformVariable:
-			err = i.valueTerraformVar(scope, n, v, result)
-		case *config.LocalVariable:
-			err = i.valueLocalVar(scope, n, v, result)
-		case *config.UserVariable:
-			err = i.valueUserVar(scope, n, v, result)
-		default:
-			err = fmt.Errorf("%s: unknown variable type: %T", n, rawV)
-		}
-
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return result, nil
+	return nil, fmt.Errorf("type Interpolator is no longer supported; use the evaluator API instead")
 }
 
 func (i *Interpolater) valueCountVar(

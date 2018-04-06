@@ -2,11 +2,13 @@ package terraform
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"sync"
 
-	"github.com/hashicorp/errwrap"
+	"github.com/hashicorp/terraform/tfdiags"
+
+	"github.com/hashicorp/terraform/addrs"
+
 	"github.com/hashicorp/terraform/dag"
 )
 
@@ -20,10 +22,9 @@ type ContextGraphWalker struct {
 	Operation   walkOperation
 	StopContext context.Context
 
-	// Outputs, do not set these. Do not read these while the graph
-	// is being walked.
-	ValidationWarnings []string
-	ValidationErrors   []error
+	// This is an output. Do not set this, nor read it while a graph walk
+	// is in progress.
+	ValidateDiagnostics tfdiags.Diagnostics
 
 	errorLock           sync.Mutex
 	once                sync.Once
@@ -37,14 +38,14 @@ type ContextGraphWalker struct {
 	provisionerLock     sync.Mutex
 }
 
-func (w *ContextGraphWalker) EnterPath(path []string) EvalContext {
+func (w *ContextGraphWalker) EnterPath(path addrs.ModuleInstance) EvalContext {
 	w.once.Do(w.init)
 
 	w.contextLock.Lock()
 	defer w.contextLock.Unlock()
 
 	// If we already have a context for this path cached, use that
-	key := PathCacheKey(path)
+	key := path.String()
 	if ctx, ok := w.contexts[key]; ok {
 		return ctx
 	}
@@ -65,6 +66,14 @@ func (w *ContextGraphWalker) EnterPath(path []string) EvalContext {
 	w.interpolaterVars[key] = variables
 	w.interpolaterVarLock.Unlock()
 
+	// Our evaluator shares some locks with the main context and the walker
+	// so that we can safely run multiple evaluations at once across
+	// different modules.
+	evaluator := &Evaluator{
+		StateLock:              &w.Context.stateLock,
+		RootVariableValuesLock: &w.interpolaterVarLock,
+	}
+
 	ctx := &BuiltinEvalContext{
 		StopContext:         w.StopContext,
 		PathValue:           path,
@@ -80,6 +89,7 @@ func (w *ContextGraphWalker) EnterPath(path []string) EvalContext {
 		DiffLock:            &w.Context.diffLock,
 		StateValue:          w.Context.state,
 		StateLock:           &w.Context.stateLock,
+		Evaluator:           evaluator,
 		Interpolater: &Interpolater{
 			Operation:          w.Operation,
 			Meta:               w.Context.meta,
@@ -109,8 +119,7 @@ func (w *ContextGraphWalker) EnterEvalTree(v dag.Vertex, n EvalNode) EvalNode {
 	return EvalFilter(n, EvalNodeFilterOp(w.Operation))
 }
 
-func (w *ContextGraphWalker) ExitEvalTree(
-	v dag.Vertex, output interface{}, err error) error {
+func (w *ContextGraphWalker) ExitEvalTree(v dag.Vertex, output interface{}, diags tfdiags.Diagnostics) tfdiags.Diagnostics {
 	log.Printf("[TRACE] [%s] Exiting eval tree: %s",
 		w.Operation, dag.VertexName(v))
 
@@ -125,25 +134,15 @@ func (w *ContextGraphWalker) ExitEvalTree(
 	w.errorLock.Lock()
 	defer w.errorLock.Unlock()
 
-	// Try to get a validation error out of it. If its not a validation
-	// error, then just record the normal error.
-	verr, ok := err.(*EvalValidateError)
-	if !ok {
-		return err
+	// If we're validating then we just accumulate all diagnostics and
+	// continue running, but for all other walks we want to stop walking
+	// if an error is encountered.
+	if w.Operation == walkValidate {
+		w.ValidateDiagnostics = w.ValidateDiagnostics.Append(diags)
+		return nil
 	}
 
-	for _, msg := range verr.Warnings {
-		w.ValidationWarnings = append(
-			w.ValidationWarnings,
-			fmt.Sprintf("%s: %s", dag.VertexName(v), msg))
-	}
-	for _, e := range verr.Errors {
-		w.ValidationErrors = append(
-			w.ValidationErrors,
-			errwrap.Wrapf(fmt.Sprintf("%s: {{err}}", dag.VertexName(v)), e))
-	}
-
-	return nil
+	return diags
 }
 
 func (w *ContextGraphWalker) init() {
